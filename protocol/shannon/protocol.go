@@ -126,6 +126,11 @@ type Protocol struct {
 	// When nil, no reputation-based filtering is applied.
 	reputationService reputation.ReputationService
 
+	// preferProbed, when true, makes filterByReputation drop unprobed endpoints
+	// whenever any probed-and-eligible endpoint exists. Wired from
+	// active_health_checks.prefer_probed. false is today's behavior.
+	preferProbed bool
+
 	// tieredSelector selects endpoints using cascade-down tier logic.
 	// Created when a reputation service is enabled with tiered selection enabled.
 	tieredSelector *reputation.TieredSelector
@@ -369,6 +374,11 @@ func NewProtocol(
 
 		// concurrency config controls parallel endpoint queries and batch request limits
 		concurrencyConfig: config.ConcurrencyConfig,
+
+		// preferProbed is the request-path counterpart of max_probe_endpoints:
+		// when true, selection will not pick an unprobed endpoint if any
+		// probed-and-eligible endpoint exists. Zero-value false is today's behavior.
+		preferProbed: config.ActiveHealthChecksConfig.PreferProbed,
 
 		// unifiedServicesConfig for per-service configuration overrides
 		unifiedServicesConfig: &config.UnifiedServices,

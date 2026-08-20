@@ -136,6 +136,13 @@ type Score struct {
 	// ArchivalExpiresAt indicates when the archival status should be re-validated.
 	// After expiry, the endpoint needs to pass health checks again to be archival-capable.
 	ArchivalExpiresAt time.Time
+
+	// HasHealthCheckProbe is true once this key has received at least one reputation
+	// signal with Signal.IsHealthCheck set. Selection uses this (when prefer_probed is
+	// on) so an unprobed endpoint sitting at initial_score cannot beat a probed-healthy
+	// one. Persisted with the score so every replica sees the same probe set; a missing
+	// key (new session member, fresh process) is unprobed.
+	HasHealthCheckProbe bool
 }
 
 // LatencyMetrics tracks response latency statistics for an endpoint.

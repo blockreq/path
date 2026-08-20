@@ -279,6 +279,27 @@ type (
 		// other suppliers on that URL — cutting HC relay volume by the redundancy factor.
 		// WebSocket checks are never deduped (connectivity is per-endpoint). Default: true.
 		BackendDedup *bool `yaml:"backend_dedup,omitempty"`
+
+		// MaxProbeEndpoints caps how many session endpoints a health-check cycle probes
+		// per service. 0 (zero-value / unset) probes ALL session endpoints — today's
+		// behavior, and the merge-safe default. When > 0 and the session is larger,
+		// the cycle probes the top N by the same reputation score the request path
+		// uses (JSON-RPC key), then existing backend-URL dedup still collapses the
+		// reduced set.
+		MaxProbeEndpoints int `yaml:"max_probe_endpoints,omitempty"`
+
+		// PreferProbed, when true, makes user-request selection refuse an endpoint that
+		// has never received a health-check reputation signal if any probed-and-eligible
+		// endpoint exists. Required when MaxProbeEndpoints is reduced: unprobed endpoints
+		// otherwise sit at initial_score and look healthier than the nodes we actually
+		// measure. false (zero-value) is today's behavior.
+		PreferProbed bool `yaml:"prefer_probed,omitempty"`
+
+		// RecoveryProbes is the number of extra endpoints, per service per cycle, drawn
+		// from the set NOT selected by MaxProbeEndpoints so low-score / in-cooldown
+		// endpoints can still recover. 0 (zero-value) adds none. Ignored when
+		// MaxProbeEndpoints is 0 (the cycle already probes everyone).
+		RecoveryProbes int `yaml:"recovery_probes,omitempty"`
 	}
 
 	// RetryConfig configures automatic retry behavior for failed requests.
@@ -365,6 +386,10 @@ func (hc *ActiveHealthChecksConfig) HydrateDefaults(hasRedis bool) {
 		hc.BackendDedup = &enabled
 	}
 
+	// MaxProbeEndpoints, PreferProbed and RecoveryProbes keep their zero values:
+	// 0 / false is today's "probe every session endpoint" / "no prefer-probed"
+	// behavior. Do not invent a non-zero default here — this must be safe to merge.
+
 	// Hydrate coordination defaults
 	hc.Coordination.HydrateDefaults()
 
@@ -436,6 +461,13 @@ func (hcc *HealthCheckConfig) HydrateDefaults() {
 // Validate validates the ActiveHealthChecksConfig.
 // Returns an error if validation fails.
 func (hc *ActiveHealthChecksConfig) Validate() error {
+	if hc.MaxProbeEndpoints < 0 {
+		return fmt.Errorf("invalid active_health_checks.max_probe_endpoints: %d (must be >= 0)", hc.MaxProbeEndpoints)
+	}
+	if hc.RecoveryProbes < 0 {
+		return fmt.Errorf("invalid active_health_checks.recovery_probes: %d (must be >= 0)", hc.RecoveryProbes)
+	}
+
 	// Validate coordination config
 	if hc.Coordination.Type != "" && hc.Coordination.Type != "leader_election" && hc.Coordination.Type != "none" {
 		return fmt.Errorf("invalid active_health_checks.coordination.type: %s (must be 'leader_election' or 'none')", hc.Coordination.Type)

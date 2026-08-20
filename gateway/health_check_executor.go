@@ -2350,6 +2350,129 @@ func (e *HealthCheckExecutor) resolveEndpointInfos(
 	return resolved
 }
 
+// probeCandidate is one session endpoint plus the reputation score used to rank
+// health-check probes. Score and cooldown come from the SAME json_rpc key the
+// request path's tiered selection reads — not a second scoring system.
+type probeCandidate struct {
+	ep       EndpointInfo
+	score    float64
+	cooldown bool
+}
+
+// selectProbeEndpoints reduces a service's session endpoints to the health-check
+// probe set for this cycle.
+//
+// When max_probe_endpoints is 0 (unset), the full session is returned — today's
+// "probe all" behavior. When it is > 0 and the session is larger:
+//  1. take the top N by current reputation (json_rpc), missing scores = initial_score
+//  2. add up to recovery_probes extra endpoints from the remainder, preferring
+//     in-cooldown then lowest score (the death-spiral recovery path)
+//
+// Backend-URL dedup is NOT applied here; the caller still groupEndpointsByURL
+// on this reduced set.
+func (e *HealthCheckExecutor) selectProbeEndpoints(
+	ctx context.Context,
+	serviceID protocol.ServiceID,
+	endpoints []EndpointInfo,
+) []EndpointInfo {
+	if e.config == nil {
+		return endpoints
+	}
+	maxProbe := e.config.MaxProbeEndpoints
+	if maxProbe <= 0 || len(endpoints) <= maxProbe {
+		// Probe-all, or the session already fits in the cap. Recovery probes
+		// only make sense against a remainder we are otherwise skipping.
+		return endpoints
+	}
+
+	candidates := e.scoreProbeCandidates(ctx, serviceID, endpoints)
+
+	// Primary set: highest current reputation first. Addr tie-break keeps the
+	// ranking deterministic for tests (and for a fresh session where everyone
+	// is still at initial_score).
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].ep.Addr < candidates[j].ep.Addr
+	})
+
+	primary := candidates[:maxProbe]
+	remainder := candidates[maxProbe:]
+
+	recovery := e.config.RecoveryProbes
+	if recovery > len(remainder) {
+		recovery = len(remainder)
+	}
+	if recovery > 0 {
+		sort.SliceStable(remainder, func(i, j int) bool {
+			if remainder[i].cooldown != remainder[j].cooldown {
+				return remainder[i].cooldown // in-cooldown first — they need recovery
+			}
+			if remainder[i].score != remainder[j].score {
+				return remainder[i].score < remainder[j].score
+			}
+			return remainder[i].ep.Addr < remainder[j].ep.Addr
+		})
+	}
+
+	selected := make([]EndpointInfo, 0, maxProbe+recovery)
+	for _, c := range primary {
+		selected = append(selected, c.ep)
+	}
+	for _, c := range remainder[:recovery] {
+		selected = append(selected, c.ep)
+	}
+	return selected
+}
+
+// scoreProbeCandidates looks up the json_rpc reputation used by user-request
+// selection. Reputation unavailable (nil service, GetScores error, missing key)
+// is treated as initial_score so a fresh session can still enter the top-N and
+// get its first probe.
+func (e *HealthCheckExecutor) scoreProbeCandidates(
+	ctx context.Context,
+	serviceID protocol.ServiceID,
+	endpoints []EndpointInfo,
+) []probeCandidate {
+	initial := reputation.InitialScore
+	candidates := make([]probeCandidate, len(endpoints))
+	for i, ep := range endpoints {
+		candidates[i] = probeCandidate{ep: ep, score: initial}
+	}
+
+	if e.reputationSvc == nil {
+		return candidates
+	}
+	initial = e.reputationSvc.GetInitialScoreForService(serviceID)
+	for i := range candidates {
+		candidates[i].score = initial
+	}
+
+	keyBuilder := e.reputationSvc.KeyBuilderForService(serviceID)
+	keys := make([]reputation.EndpointKey, len(endpoints))
+	for i, ep := range endpoints {
+		keys[i] = keyBuilder.BuildKey(serviceID, ep.Addr, sharedtypes.RPCType_JSON_RPC)
+	}
+
+	scores, err := e.reputationSvc.GetScores(ctx, keys)
+	if err != nil {
+		e.logger.Warn().
+			Err(err).
+			Str("service_id", string(serviceID)).
+			Msg("Failed to get reputation scores for health-check probe ranking, treating all as initial_score")
+		return candidates
+	}
+
+	for i, key := range keys {
+		if sc, ok := scores[key]; ok {
+			candidates[i].score = sc.Value
+			candidates[i].cooldown = sc.IsInCooldown()
+		}
+	}
+	return candidates
+}
+
 // RunAllChecksViaProtocol runs health checks through the protocol layer for all configured services.
 // This is the main entry point for protocol-based health checks.
 // Health checks are executed in parallel using a pond worker pool.
@@ -2429,6 +2552,17 @@ func (e *HealthCheckExecutor) RunAllChecksViaProtocol(
 				Str("service_id", string(svcConfig.ServiceID)).
 				Msg("No endpoints available for health checks")
 			continue
+		}
+
+		resolvedCount := len(endpointInfos)
+		endpointInfos = e.selectProbeEndpoints(ctx, svcConfig.ServiceID, endpointInfos)
+		if e.config != nil && e.config.MaxProbeEndpoints > 0 {
+			e.logger.Info().
+				Str("service_id", string(svcConfig.ServiceID)).
+				Int("probed_count", len(endpointInfos)).
+				Int("skipped_count", resolvedCount-len(endpointInfos)).
+				Int("max_probe_endpoints", e.config.MaxProbeEndpoints).
+				Msg("Health check probe set selected")
 		}
 
 		serviceID := svcConfig.ServiceID

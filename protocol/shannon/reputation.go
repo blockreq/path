@@ -14,6 +14,15 @@ import (
 	"github.com/pokt-network/path/reputation"
 )
 
+// addrKey is one endpoint plus the reputation key filterByReputation (and
+// prefer_probed) look up. Built once per selection pass so BuildKey is not
+// re-run per filter.
+type addrKey struct {
+	addr protocol.EndpointAddr
+	ep   endpoint
+	key  reputation.EndpointKey
+}
+
 // NOTE: Error classification has been moved to error_classification.go
 // The old mapErrorToSignal, mapSessionSanctionError, and mapNonSanctionedError functions
 // have been replaced by classifyErrorAsSignal() which directly maps errors to reputation signals
@@ -44,11 +53,6 @@ func (p *Protocol) filterByReputation(
 	// walks this slice instead of re-iterating the map and re-calling BuildKey
 	// (which allocates for non-default key granularities — domain mode parses
 	// URLs and extracts hostnames).
-	type addrKey struct {
-		addr protocol.EndpointAddr
-		ep   endpoint
-		key  reputation.EndpointKey
-	}
 	cached := make([]addrKey, 0, len(endpoints))
 	keys := make([]reputation.EndpointKey, 0, len(endpoints))
 	for addr, ep := range endpoints {
@@ -273,7 +277,78 @@ func (p *Protocol) filterByReputation(
 		metrics.RecordReputationPoolCollapseGuard(serviceIDLabel, rpcTypeLabel)
 	}
 
+	if p.preferProbed {
+		filtered = p.applyPreferProbed(filtered, cached, scores, logger)
+	}
+
 	return filtered
+}
+
+// applyPreferProbed drops unprobed endpoints from the already-filtered (eligible)
+// set when at least one probed-and-eligible endpoint exists.
+//
+// "Probed" means this reputation key has received a health-check signal
+// (Score.HasHealthCheckProbe), keyed by the same BuildKey(service, endpoint, rpcType)
+// the rest of selection uses. json_rpc traffic therefore looks at json_rpc probe
+// signals, not websocket — the keys differ by RPC type.
+//
+// If NONE of the selectable endpoints are probed yet (startup, or a session
+// rollover that introduced an entirely new key set), the unprobed set is kept
+// so the pool is not empty; the next health-check cycle will probe the top N.
+// Hedge, retry and fallback all reach this function via filterByReputation, so
+// they follow the same rule.
+func (p *Protocol) applyPreferProbed(
+	filtered map[protocol.EndpointAddr]endpoint,
+	cached []addrKey,
+	scores map[reputation.EndpointKey]reputation.Score,
+	logger polylog.Logger,
+) map[protocol.EndpointAddr]endpoint {
+	if len(filtered) == 0 {
+		return filtered
+	}
+
+	keyOf := make(map[protocol.EndpointAddr]reputation.EndpointKey, len(cached))
+	for _, ak := range cached {
+		keyOf[ak.addr] = ak.key
+	}
+
+	isProbed := func(addr protocol.EndpointAddr) bool {
+		sc, ok := scores[keyOf[addr]]
+		return ok && sc.HasHealthCheckProbe
+	}
+
+	anyProbed := false
+	for addr := range filtered {
+		if isProbed(addr) {
+			anyProbed = true
+			break
+		}
+	}
+	if !anyProbed {
+		return filtered
+	}
+
+	kept := make(map[protocol.EndpointAddr]endpoint, len(filtered))
+	dropped := 0
+	for addr, ep := range filtered {
+		if isProbed(addr) {
+			kept[addr] = ep
+		} else {
+			dropped++
+		}
+	}
+	if len(kept) == 0 {
+		// Defensive: a probed-and-eligible endpoint existed a moment ago.
+		// Never empty the pool.
+		return filtered
+	}
+	if dropped > 0 {
+		logger.Debug().
+			Int("dropped_unprobed", dropped).
+			Int("kept_probed", len(kept)).
+			Msg("prefer_probed: excluding unprobed endpoints because probed-and-eligible endpoints exist")
+	}
+	return kept
 }
 
 // endpointScoresForKeys fetches reputation scores for the given keys and projects
