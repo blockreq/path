@@ -222,10 +222,10 @@ release_build_local: ## Build cgo and nocgo binaries for current platform only
 	@echo "✓ Built cgo binary: $(RELEASE_DIR)/path-local_cgo"
 
 .PHONY: release_ghcr_image_current_branch
-release_ghcr_image_current_branch: ## Trigger the main-build workflow using the current branch to push an image to ghcr.io/buildwithgrove/path
+release_ghcr_image_current_branch: ## Trigger the main-build workflow using the current branch to push an image to ghcr.io/blockreq/path
 	@echo "Triggering main-build workflow for current branch..."
 	@BRANCH=$$(git rev-parse --abbrev-ref HEAD) && \
 	gh workflow run main-build.yml --ref $$BRANCH
 	@echo "Workflow triggered for branch: ${CYAN} $$(git rev-parse --abbrev-ref HEAD)${RESET}"
 	@echo "Check the workflow status at: ${BLUE}https://github.com/$(shell git config --get remote.origin.url | sed 's/.*github.com[:/]\([^/]*\/[^.]*\).*/\1/')/actions/workflows/main-build.yml${RESET}"
-	@echo "Visit ${CYAN}ghcr.io/buildwithgrove/path${RESET} to see the image being built."
+	@echo "Visit ${CYAN}ghcr.io/blockreq/path${RESET} to see the image being built."

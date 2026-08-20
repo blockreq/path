@@ -15,6 +15,9 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -43,7 +46,7 @@ jobs:
           DOCKER_METADATA_PR_HEAD_SHA: "true"
         with:
           images: |
-            ghcr.io/pokt-network/path
+            ghcr.io/blockreq/path
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -58,7 +61,7 @@ jobs:
           DOCKER_METADATA_PR_HEAD_SHA: "true"
         with:
           images: |
-            ghcr.io/pokt-network/path
+            ghcr.io/blockreq/path
           tags: |
             type=semver,pattern={{version}},suffix=-cgo
             type=semver,pattern={{major}}.{{minor}},suffix=-cgo
