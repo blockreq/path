@@ -73,11 +73,11 @@ var _ endpoint = (*harnessEndpoint)(nil)
 func (e *harnessEndpoint) Addr() protocol.EndpointAddr {
 	return protocol.EndpointAddr(e.supplier + "-" + e.url)
 }
-func (e *harnessEndpoint) PublicURL() string                    { return e.url }
-func (e *harnessEndpoint) GetURL(_ sharedtypes.RPCType) string  { return e.url }
-func (e *harnessEndpoint) WebsocketURL() (string, error)        { return e.url, nil }
-func (e *harnessEndpoint) Supplier() string                     { return e.supplier }
-func (e *harnessEndpoint) IsFallback() bool                     { return false }
+func (e *harnessEndpoint) PublicURL() string                   { return e.url }
+func (e *harnessEndpoint) GetURL(_ sharedtypes.RPCType) string { return e.url }
+func (e *harnessEndpoint) WebsocketURL() (string, error)       { return e.url, nil }
+func (e *harnessEndpoint) Supplier() string                    { return e.supplier }
+func (e *harnessEndpoint) IsFallback() bool                    { return false }
 func (e *harnessEndpoint) Session() *sessiontypes.Session {
 	return &sessiontypes.Session{Header: &sessiontypes.SessionHeader{}, Application: &apptypes.Application{}}
 }
@@ -242,6 +242,31 @@ func (s *selectionScenario) RotateSuppliers(generation int) {
 	}
 }
 
+func (s *selectionScenario) endpointKey(url string, rpcType sharedtypes.RPCType) reputation.EndpointKey {
+	s.t.Helper()
+	kb := s.svc.KeyBuilderForService(s.serviceID)
+	return kb.BuildKey(s.serviceID, protocol.EndpointAddr(s.supplierOf[url]+"-"+url), rpcType)
+}
+
+// Probe records a health-check reputation signal for url at rpcType. This is what
+// prefer_probed consults — a user-traffic success must NOT count as probed.
+func (s *selectionScenario) Probe(url string, rpcType sharedtypes.RPCType) {
+	s.t.Helper()
+	sig := reputation.NewRecoverySuccessSignal(50 * time.Millisecond)
+	sig.IsHealthCheck = true
+	require.NoError(s.t, s.svc.RecordSignal(s.ctx, s.endpointKey(url, rpcType), sig))
+}
+
+// RecordUserSuccess records n non-health-check success signals, raising the score
+// without marking the endpoint probed.
+func (s *selectionScenario) RecordUserSuccess(url string, rpcType sharedtypes.RPCType, n int) {
+	s.t.Helper()
+	key := s.endpointKey(url, rpcType)
+	for i := 0; i < n; i++ {
+		require.NoError(s.t, s.svc.RecordSignal(s.ctx, key, reputation.NewSuccessSignal(10*time.Millisecond)))
+	}
+}
+
 func rpcTypeName(rpcType sharedtypes.RPCType) string {
 	return strings.ToLower(rpcType.String())
 }
@@ -251,10 +276,10 @@ func rpcTypeName(rpcType sharedtypes.RPCType) string {
 // =============================================================================
 
 const (
-	opBetaA = "https://f019.op-beta.example"
-	opBetaB = "https://f026.op-beta.example"
-	opAlphaA   = "https://r001.op-alpha.example"
-	opGammaA  = "https://n1.op-gamma.example"
+	opBetaA  = "https://f019.op-beta.example"
+	opBetaB  = "https://f026.op-beta.example"
+	opAlphaA = "https://r001.op-alpha.example"
+	opGammaA = "https://n1.op-gamma.example"
 )
 
 // BUG 3 — the filter mutated a map its result was not built from, so nothing was excluded

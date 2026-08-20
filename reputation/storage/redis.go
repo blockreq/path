@@ -37,16 +37,17 @@ type RedisStorage struct {
 
 // Redis hash field names
 const (
-	fieldValue              = "value"
-	fieldLastUpdated        = "last_updated"
-	fieldSuccessCount       = "success_count"
-	fieldErrorCount         = "error_count"
-	fieldCriticalStrikes    = "critical_strikes"
-	fieldCooldownUntil      = "cooldown_until"
-	fieldIsArchival         = "is_archival"
-	fieldArchivalExpires    = "archival_expires_at"
-	fieldRecentCriticalRate = "recent_critical_rate"
-	fieldRateCooldownCount  = "rate_cooldown_count"
+	fieldValue               = "value"
+	fieldLastUpdated         = "last_updated"
+	fieldSuccessCount        = "success_count"
+	fieldErrorCount          = "error_count"
+	fieldCriticalStrikes     = "critical_strikes"
+	fieldCooldownUntil       = "cooldown_until"
+	fieldIsArchival          = "is_archival"
+	fieldArchivalExpires     = "archival_expires_at"
+	fieldRecentCriticalRate  = "recent_critical_rate"
+	fieldRateCooldownCount   = "rate_cooldown_count"
+	fieldHasHealthCheckProbe = "health_check_probe"
 )
 
 // perceivedBlockTTL bounds how long a perceived block-height entry lives in
@@ -193,18 +194,23 @@ func (r *RedisStorage) Set(ctx context.Context, key reputation.EndpointKey, scor
 	if score.IsArchival {
 		isArchivalStr = "1"
 	}
+	probedStr := "0"
+	if score.HasHealthCheckProbe {
+		probedStr = "1"
+	}
 
 	fields := map[string]interface{}{
-		fieldValue:              strconv.FormatFloat(score.Value, 'f', -1, 64),
-		fieldLastUpdated:        strconv.FormatInt(score.LastUpdated.Unix(), 10),
-		fieldSuccessCount:       strconv.FormatInt(score.SuccessCount, 10),
-		fieldErrorCount:         strconv.FormatInt(score.ErrorCount, 10),
-		fieldCriticalStrikes:    strconv.Itoa(score.CriticalStrikes),
-		fieldCooldownUntil:      strconv.FormatInt(score.CooldownUntil.Unix(), 10),
-		fieldIsArchival:         isArchivalStr,
-		fieldArchivalExpires:    strconv.FormatInt(score.ArchivalExpiresAt.Unix(), 10),
-		fieldRecentCriticalRate: strconv.FormatFloat(score.RecentCriticalRate, 'f', -1, 64),
-		fieldRateCooldownCount:  strconv.Itoa(score.RateCooldownCount),
+		fieldValue:               strconv.FormatFloat(score.Value, 'f', -1, 64),
+		fieldLastUpdated:         strconv.FormatInt(score.LastUpdated.Unix(), 10),
+		fieldSuccessCount:        strconv.FormatInt(score.SuccessCount, 10),
+		fieldErrorCount:          strconv.FormatInt(score.ErrorCount, 10),
+		fieldCriticalStrikes:     strconv.Itoa(score.CriticalStrikes),
+		fieldCooldownUntil:       strconv.FormatInt(score.CooldownUntil.Unix(), 10),
+		fieldIsArchival:          isArchivalStr,
+		fieldArchivalExpires:     strconv.FormatInt(score.ArchivalExpiresAt.Unix(), 10),
+		fieldRecentCriticalRate:  strconv.FormatFloat(score.RecentCriticalRate, 'f', -1, 64),
+		fieldRateCooldownCount:   strconv.Itoa(score.RateCooldownCount),
+		fieldHasHealthCheckProbe: probedStr,
 	}
 
 	pipe := r.client.Pipeline()
@@ -238,18 +244,23 @@ func (r *RedisStorage) SetMultiple(ctx context.Context, scores map[reputation.En
 		if score.IsArchival {
 			isArchivalStr = "1"
 		}
+		probedStr := "0"
+		if score.HasHealthCheckProbe {
+			probedStr = "1"
+		}
 
 		fields := map[string]interface{}{
-			fieldValue:              strconv.FormatFloat(score.Value, 'f', -1, 64),
-			fieldLastUpdated:        strconv.FormatInt(score.LastUpdated.Unix(), 10),
-			fieldSuccessCount:       strconv.FormatInt(score.SuccessCount, 10),
-			fieldErrorCount:         strconv.FormatInt(score.ErrorCount, 10),
-			fieldCriticalStrikes:    strconv.Itoa(score.CriticalStrikes),
-			fieldCooldownUntil:      strconv.FormatInt(score.CooldownUntil.Unix(), 10),
-			fieldIsArchival:         isArchivalStr,
-			fieldArchivalExpires:    strconv.FormatInt(score.ArchivalExpiresAt.Unix(), 10),
-			fieldRecentCriticalRate: strconv.FormatFloat(score.RecentCriticalRate, 'f', -1, 64),
-			fieldRateCooldownCount:  strconv.Itoa(score.RateCooldownCount),
+			fieldValue:               strconv.FormatFloat(score.Value, 'f', -1, 64),
+			fieldLastUpdated:         strconv.FormatInt(score.LastUpdated.Unix(), 10),
+			fieldSuccessCount:        strconv.FormatInt(score.SuccessCount, 10),
+			fieldErrorCount:          strconv.FormatInt(score.ErrorCount, 10),
+			fieldCriticalStrikes:     strconv.Itoa(score.CriticalStrikes),
+			fieldCooldownUntil:       strconv.FormatInt(score.CooldownUntil.Unix(), 10),
+			fieldIsArchival:          isArchivalStr,
+			fieldArchivalExpires:     strconv.FormatInt(score.ArchivalExpiresAt.Unix(), 10),
+			fieldRecentCriticalRate:  strconv.FormatFloat(score.RecentCriticalRate, 'f', -1, 64),
+			fieldRateCooldownCount:   strconv.Itoa(score.RateCooldownCount),
+			fieldHasHealthCheckProbe: probedStr,
 		}
 
 		pipe.HSet(ctx, redisKey, fields)
@@ -408,6 +419,11 @@ func (r *RedisStorage) parseScore(data map[string]string) (reputation.Score, err
 		if ts > 0 {
 			score.ArchivalExpiresAt = time.Unix(ts, 0)
 		}
+	}
+
+	// Absent field (older records) leaves HasHealthCheckProbe false — unprobed.
+	if v, ok := data[fieldHasHealthCheckProbe]; ok {
+		score.HasHealthCheckProbe = v == "1" || v == "true"
 	}
 
 	return score, nil

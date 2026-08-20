@@ -241,6 +241,7 @@ func TestService_RecordSignal(t *testing.T) {
 	require.Equal(t, 81.0, score.Value) // 80 + 1
 	require.Equal(t, int64(1), score.SuccessCount)
 	require.Equal(t, int64(0), score.ErrorCount)
+	require.False(t, score.HasHealthCheckProbe, "user-traffic success must not mark the endpoint probed")
 
 	// Record error signal
 	err = svc.RecordSignal(ctx, key, NewMajorErrorSignal("timeout", 5*time.Second))
@@ -251,6 +252,34 @@ func TestService_RecordSignal(t *testing.T) {
 	require.Equal(t, 71.0, score.Value) // 81 - 10
 	require.Equal(t, int64(1), score.SuccessCount)
 	require.Equal(t, int64(1), score.ErrorCount)
+}
+
+func TestService_HealthCheckSignalMarksProbedAndSurvivesUserTraffic(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStorage()
+	defer store.Close()
+
+	config := Config{Enabled: true, InitialScore: 80, MinThreshold: 30}
+	config.HydrateDefaults()
+
+	svc := NewService(config, store)
+	require.NoError(t, svc.Start(ctx))
+	defer func() { _ = svc.Stop() }()
+
+	key := NewEndpointKey("eth", "endpoint1", sharedtypes.RPCType_JSON_RPC)
+
+	probe := NewRecoverySuccessSignal(50 * time.Millisecond)
+	probe.IsHealthCheck = true
+	require.NoError(t, svc.RecordSignal(ctx, key, probe))
+
+	score, err := svc.GetScore(ctx, key)
+	require.NoError(t, err)
+	require.True(t, score.HasHealthCheckProbe, "an IsHealthCheck signal must mark the key probed")
+
+	require.NoError(t, svc.RecordSignal(ctx, key, NewSuccessSignal(10*time.Millisecond)))
+	score, err = svc.GetScore(ctx, key)
+	require.NoError(t, err)
+	require.True(t, score.HasHealthCheckProbe, "subsequent user-traffic signals must not clear the probe flag")
 }
 
 func TestService_ScoreClamping(t *testing.T) {

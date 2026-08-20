@@ -241,6 +241,13 @@ func (s *service) RecordSignal(ctx context.Context, key EndpointKey, signal Sign
 		score.LatencyMetrics.UpdateLatency(signal.Latency)
 	}
 
+	// A health-check probe marks the key as probed. User-traffic signals must never
+	// clear the flag: prefer_probed needs "has this key ever been measured by HC",
+	// not "was the most recent signal a probe".
+	if signal.IsHealthCheck {
+		score.HasHealthCheckProbe = true
+	}
+
 	s.setScoreLocked(key, score)
 	s.mu.Unlock()
 
