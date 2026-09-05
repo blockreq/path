@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   release-on-push:
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted]
     env:
       GITHUB_TOKEN: ${{ github.token }}
     if: startsWith(github.ref, 'refs/tags/v')

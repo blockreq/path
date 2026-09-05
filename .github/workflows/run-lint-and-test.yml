@@ -9,7 +9,7 @@ on:
 jobs:
   run-linter:
     name: Run linter
-    runs-on: "ubuntu-22.04"
+    runs-on: [self-hosted]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +31,7 @@ jobs:
 
   run-unit-tests:
     name: Run unit tests
-    runs-on: "ubuntu-22.04"
+    runs-on: [self-hosted]
     steps:
       - uses: actions/checkout@v4
 
