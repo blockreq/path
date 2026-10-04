@@ -14,16 +14,10 @@ import (
 	reputationstorage "github.com/pokt-network/path/reputation/storage"
 )
 
-// TestFilterToHighestTier_EmptyWhenAllBelowThreshold pins the root cause behind the
-// Target-Suppliers bypass: when no endpoint reaches any tier, filterToHighestTier returns an
-// EMPTY map rather than falling back to the input set.
-//
-// This is correct for normal selection — serving traffic to endpoints reputation has
-// disqualified is worse than failing — but it is why a Target-Suppliers pin could not reach a
-// cooled-down supplier: the pin bypasses the threshold/cooldown filter, then this ran anyway
-// and emptied the pool. Real case (mantle/nodefleet, 2026-07-31): 40 of 50 endpoints at score 0,
-// and `Target-Suppliers: <any of them>` returned "no valid endpoints available for service".
-func TestFilterToHighestTier_EmptyWhenAllBelowThreshold(t *testing.T) {
+// TestFilterToHighestTier_KeepsLeastBadWhenAllBelowThreshold ensures that ordinary
+// tier selection preserves the pool-collapse guard's least-bad candidates. Supplier
+// pins still bypass tier selection separately, including when healthier peers exist.
+func TestFilterToHighestTier_KeepsLeastBadWhenAllBelowThreshold(t *testing.T) {
 	ctx := context.Background()
 	logger := polyzero.NewLogger()
 	serviceID := protocol.ServiceID("mantle")
@@ -76,12 +70,11 @@ func TestFilterToHighestTier_EmptyWhenAllBelowThreshold(t *testing.T) {
 	}
 
 	result := p.filterToHighestTier(ctx, serviceID, endpoints, rpcType, logger, "")
-	require.Empty(t, result, "filterToHighestTier must return an empty map when no endpoint reaches a tier")
+	require.Equal(t, endpoints, result, "equally degraded candidates must survive the last tier filter")
 
-	// The requestedEndpointAddr escape hatch also requires score >= MinThreshold, so it does
-	// NOT rescue a score-0 endpoint either. Skipping the whole stage is the only way through.
+	// A requested endpoint in the retained least-bad group also remains usable.
 	result = p.filterToHighestTier(ctx, serviceID, endpoints, rpcType, logger, addrs[0])
-	require.Empty(t, result, "requestedEndpointAddr must not rescue an endpoint below MinThreshold")
+	require.Equal(t, endpoints, result)
 }
 
 // TestShouldApplyTieredSelection covers the gate that decides whether the behavior pinned above

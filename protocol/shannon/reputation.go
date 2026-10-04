@@ -427,6 +427,7 @@ func (p *Protocol) getMinThresholdForService(serviceID protocol.ServiceID) float
 // filterToHighestTier filters endpoints to only return those from the highest available tier.
 // This implements the cascade-down selection: if Tier 1 has endpoints, only return Tier 1.
 // If Tier 1 is empty, return Tier 2. If both are empty, return Tier 3.
+// If every remaining candidate is below the minimum, keep only the least-bad score group.
 // This allows the QoS layer to still do its validation and selection, but only within the best tier.
 //
 // If probation is enabled, this function also:
@@ -575,9 +576,26 @@ func (p *Protocol) filterToHighestTier(
 		selectedTier = 3
 		selectedKeys = tier3
 	default:
-		// No endpoints in any tier (all below threshold) - return empty
-		logger.Warn().Msg("No endpoints available in any tier after tiered filtering")
-		return make(map[protocol.EndpointAddr]endpoint)
+		// Reputation may already have restored the least-bad candidates after a pool
+		// collapse. Do not discard that guard here. Consider only the current input:
+		// policy, domain, supplier, and probe filters have already restricted it.
+		var maxScore float64
+		hasScore := false
+		for _, score := range endpointScores {
+			if !hasScore || score > maxScore {
+				maxScore = score
+				hasScore = true
+			}
+		}
+		for key, score := range endpointScores {
+			if score >= maxScore-1e-9 {
+				selectedKeys = append(selectedKeys, key)
+			}
+		}
+		logger.Warn().
+			Int("kept_least_bad", len(selectedKeys)).
+			Float64("max_score", maxScore).
+			Msg("No endpoints available in any tier; keeping the least-bad current candidates")
 	}
 
 	// Build result map with only endpoints from the selected tier
