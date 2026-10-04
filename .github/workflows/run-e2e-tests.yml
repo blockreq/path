@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 jobs:
@@ -14,6 +15,7 @@ jobs:
 
   build-and-test-docker-image:
     name: Build & test Docker image
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: [self-hosted]
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +55,7 @@ jobs:
 
   run-e2e-tests-shannon:
     name: Run E2E tests - HTTP Requests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: [self-hosted]
     # TODO(@olshansky): Investigate why this job occasionally hangs indefinitely.
     # Adding explicit timeout to fail fast instead of waiting for GitHub's default 6-hour timeout.
@@ -113,6 +116,7 @@ jobs:
 
   run-e2e-tests-websockets:
     name: Run E2E tests - WebSockets
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: [self-hosted]
     needs:
       - build-and-test-docker-image

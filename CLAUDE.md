@@ -626,3 +626,7 @@ supplier address, and supplier sets rotate every session.
 - **E2E Tests** - Full integration tests against live blockchain endpoints
 - **Load Tests** - Performance testing using Vegeta load testing tool
 - **Protocol Tests** - test suites for Shannon protocol
+
+Draft pull requests run the existing unit, lint, and review checks. Docker image builds
+and live E2E jobs wait until the pull request is ready for review; `ready_for_review`
+starts those checks. Main-branch pushes and manual E2E runs retain the same behavior.

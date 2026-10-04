@@ -1459,11 +1459,9 @@ func (p *Protocol) getSessionsUniqueEndpoints(
 //
 //   - filterByReputation is false — health checks and leaderboard metrics gathering, which must
 //     see every endpoint including the ones reputation has already disqualified.
-//   - allowedSuppliers is non-empty — a Target-Suppliers pin. filterToHighestTier returns an
-//     EMPTY map when no endpoint reaches any tier (all below MinThreshold), and its
-//     requestedEndpointAddr escape hatch also requires score >= MinThreshold. Without this skip
-//     the header cannot reach a cooled-down or score-0 supplier, which is precisely the case
-//     operators use it to diagnose.
+//   - allowedSuppliers is non-empty — a Target-Suppliers pin. Ordinary tier selection could
+//     exclude the pinned supplier in favor of healthier peers. Operators must still reach
+//     a cooled-down or score-0 supplier when using this header to diagnose it.
 //
 // S1: tiered selection (ranking) stays OFF for WebSocket — there are no active WS health checks
 // yet, so ranking on WS scores is deferred to S2. WS still gets blacklist + session-exhaustion +
